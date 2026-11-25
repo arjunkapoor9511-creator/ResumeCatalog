@@ -1,0 +1,61 @@
+{
+  "contact": {
+    "name": "<Full Name>",
+    "email": "<email or null>",
+    "phone": "<phone or null>",
+    "location": "<City, State/Country or null>",
+    "links": ["<other contact-section item, e.g. a profile link or link text, exactly as it appears>"]
+  },
+  "headline": "<title line under the name, or null>",
+  "summary": "<professional summary paragraph, verbatim, or null>",
+  "companies": [
+    {
+      "name": "<Company Name>",
+      "location": "<City, State/Country or null>",
+      "start_date": "<YYYY-MM | YYYY: earliest role start at this company>",
+      "end_date": "<YYYY-MM | YYYY | Present: latest role end at this company>",
+      "company_summary": "<the resume's own sentence about the company, verbatim, no tags like (AI Startup), or null>",
+      "role_summary": "<non-bulleted line describing your overall remit at this company, verbatim, or null>",
+      "roles": [
+        {
+          "title": "<Most Recent Position Title>",
+          "start_date": "<YYYY-MM | YYYY>",
+          "end_date": "<YYYY-MM | YYYY | Present>",
+          "bullets": [
+            { "text": "<full bullet, verbatim>" },
+            { "text": "<bullet with no clear position also goes under the most recent role>" }
+          ]
+        },
+        {
+          "title": "<Earlier Position Title>",
+          "start_date": "<YYYY-MM | YYYY>",
+          "end_date": "<YYYY-MM | YYYY>",
+          "bullets": []
+        }
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "<Institution Name>",
+      "location": "<City, State/Country or null>",
+      "degree": "<degree type only, e.g. Bachelor of Science, or null>",
+      "field_of_study": "<field split from 'X in Y', e.g. Computing & Software Systems, or null>",
+      "graduation_date": "<as written in the resume, or null>",
+      "notes": ["<bullet under this entry, or honours/awards like (Dean's Award), verbatim>"]
+    }
+  ],
+  "skills": ["<skill>"],
+  "certifications": ["<certification>"],
+  "additional_information": [
+    {
+      "title": "<volunteer / project / teaching / advisory title, or null>",
+      "organization": "<organization or null>",
+      "location": "<City, State/Country or null>",
+      "start_date": "<YYYY-MM | YYYY or null>",
+      "end_date": "<YYYY-MM | YYYY | Present or null>",
+      "text": "<the entire entry verbatim, including any heading line and bullets (one per line)>"
+    }
+  ],
+  "unclassified": ["<any resume text that fits nowhere else, verbatim>"]
+}
