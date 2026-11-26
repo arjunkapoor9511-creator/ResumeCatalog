@@ -1,0 +1,97 @@
+<guidelines>
+1. Write accomplishments, not duties. Never open with "Responsible for", "Helped", "Worked on", "Involved in", "Participated in".
+2. Open with a strong past-tense action verb that names YOUR contribution.
+3. Structure: action + what/how + result (or Google X-Y-Z: Accomplished [X] as measured by [Y] by doing [Z]).
+4. Quantify with $, % change, or scale (team size, budget, users, volume). Add a timeframe and, where possible, a baseline.
+5. If no number exists, state a concrete qualitative outcome (adopted, cut in half, became go-to). Never invent metrics.
+6. Show scope for experienced roles: team size, cross-functional/global, budget, number of accounts/users.
+7. 1-2 lines, no pronouns, no jargon, no self-praise adjectives, no vague words ("various", "several").
+</guidelines>
+
+<examples>
+
+<example guideline="1,3,4 duty to chained outcome">
+<bad>Responsible for introducing new tech stack into our organization</bad>
+<good>Led acquisition & integration of efficiency software that reduced errors by 25%, resulting in 37% YoY reduction in customer complaints</good>
+<why>Duty becomes ownership + primary metric + downstream business metric.</why>
+<source>Amazon</source>
+</example>
+
+<example guideline="2,4,6 vague help to scoped result">
+<bad>Helped improve team processes</bad>
+<good>Redesigned internal workflows, reducing project turnaround time by 30% across a 12-person team</good>
+<why>Names the action, the % change and the scope.</why>
+<source>Glassdoor</source>
+</example>
+
+<example guideline="3,4 X-Y-Z with method">
+<bad>Studied financial performance of companies and made investment recommendations.</bad>
+<good>Improved portfolio performance by 12% ($1.2M) over one year by refining cost of capital calculations […]</good>
+<why>Result first (% and $), timeframe, then method.</why>
+<source>Laszlo Bock via Business Insider</source>
+</example>
+
+<example guideline="4 benchmark for context">
+<bad>Wrote editorials for The New York Times.</bad>
+<good>Had 50 op-eds published compared to average of 6 by most op-ed writers […]</good>
+<why>X relative to Y: the benchmark gives the number meaning for readers outside the industry.</why>
+<source>The Muse (Bock formula)</source>
+</example>
+
+<example guideline="3,4 analysis to decision to business result">
+<bad>Conducted market data analysis and presented findings to senior management to determine the most appropriate course for the future</bad>
+<good>Built model to quantify market size & attractiveness by segment. Presented findings to CFO and VP of Marketing, recommending new business targets & redeployment of resources, resulting in 11% market share gain.</good>
+<why>Names the deliverable, the senior audience, the recommendation and the outcome.</why>
+<source>Wharton MBA Career Management</source>
+</example>
+
+<example guideline="4,6 claimed recognition to evidence">
+<bad>Recognized as a top manager among peer group</bad>
+<good>Managed team of 12 engineers & programmers through development of new product initiatives. Promoted twice in three years. Rated in top 20% of managers each of last three years.</good>
+<why>Replaces an unsupported claim with scope + verifiable proof.</why>
+<source>Wharton MBA Career Management</source>
+</example>
+
+<example guideline="4 vague over-achievement to precise rank">
+<bad>Exceeded sales quota month after month and earned an award as one of the top sales reps in the company</bad>
+<good>Consistently achieved 175% of quota and earned an award for being the #2 sales rep, company-wide, in 2020</good>
+<why>Exact % of quota, exact rank, year.</why>
+<source>Indeed</source>
+</example>
+
+<example guideline="1,3,4 activity list to investment and return">
+<bad>Collaborated with the team to redesign websites, implemented new e-commerce filtering options […]</bad>
+<good>Coordinated and oversaw the $50k redesign of a client's e-commerce site that led to a $100,000 increase […]</good>
+<why>Budget in, revenue out: shows ROI.</why>
+<source>Indeed</source>
+</example>
+
+<example guideline="5,7 no pronouns, outcome = client decision">
+<bad>I analyzed competitive strategies for clients in the bio tech industry. Data gathered assessed profitability of strategies.</bad>
+<good>Assessed profitability of expansion strategy in the biotech industry; results were used by the client to make […] decision</good>
+<why>Drops "I" and makes the client's use of the work the outcome when there's no hard number.</why>
+<source>MIT CAPD</source>
+</example>
+
+<example guideline="7 jargon to plain language">
+<bad>Deployed in support of OIF as a M249 gunner in a 20 man recon platoon</bad>
+<good>Served in support of Operation Iraqi Freedom as part of a 20 person team tasked with intelligence gathering missions.</good>
+<why>Replace insider acronyms and titles with terms any recruiter understands.</why>
+<source>Google Careers (veterans PDF)</source>
+</example>
+
+<example guideline="7 show, don't self-praise">
+<bad>Established a large client list through impeccable service, integrity, graciousness, and an unrivaled […]</bad>
+<good>Introduced mobile services that expanded our customer base by 20%.</good>
+<why>Result instead of asserted virtues. (Both appear in the same article; not a direct pair.)</why>
+<source>Fast Company (Judith Humphrey)</source>
+</example>
+
+<example guideline="7 one clause, one data point">
+<bad>Served as a key member of the Investment Committee and, with client needs as a foundation, provided input into all aspects of […]</bad>
+<good>Built software teams of 55+ specialists in four years.</good>
+<why>Short declarative sentence vs. a multi-clause role description. (Same article; not a direct pair.)</why>
+<source>Fast Company (Judith Humphrey)</source>
+</example>
+
+</examples>

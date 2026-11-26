@@ -4,6 +4,7 @@ Usage (add --db PATH before the command to target another database):
     python curate.py entities         # Opus groups company names, then position titles
     python curate.py stories          # Opus groups bullets into stories, picks a root version
     python curate.py add RESUME.json  # incremental: add one parsed resume to the curated bank
+    python curate.py score [--redo]   # quality-score bullets (good_bullets.xml) and re-pick roots
     python curate.py status           # counts by kind / confidence / status
     python curate.py review           # resolve pending (medium/low) matches interactively
     python curate.py apply            # write accepted decisions back to the original tables
@@ -12,8 +13,8 @@ High-confidence groups are auto-accepted; medium/low land in `matches` as pendin
 Nothing in the original tables (companies, positions, bullets, bullet_resumes) changes
 until `apply`, which refuses to run while anything is pending and backs up the DB first.
 
-Root rule for a story: the version used in the most resumes; on a tie, the most
-flattering version (Opus's pick). The most-used rule is enforced in code.
+Root rule for a story (enforced in code): the version with the highest bullet quality
+score (0-100, Opus against good_bullets.xml); tie -> most used; tie -> lowest id.
 """
 
 from __future__ import annotations
@@ -172,9 +173,7 @@ different deals). Shared distinctive facts (client, metric values, team size, de
 strong evidence. If metrics conflict for what is otherwise clearly the same story, still group
 them with confidence medium and name the conflict in shared_facts.
 
-root_id: the member with the highest times_used. If several members tie for the highest
-times_used, choose the most flattering of those: strongest quantified outcome, largest scope,
-clearest ownership.
+root_id: any member of the group (the root is chosen afterwards by quality score).
 shared_facts: the facts that make the members one story; empty string for single-bullet groups.
 confidence: high = clearly the same story (a single-bullet group is high); medium = probably;
 low = possibly.
@@ -320,8 +319,8 @@ def sync_story(conn, sid: int) -> int:
         conn.execute(f"UPDATE bullets SET parent_id = NULL WHERE id IN ({','.join('?' * len(members))})", members)
         return 0
     if root not in members:               # root itself was split off
-        root = max(members, key=lambda b: (_usage(conn, b), -b))
-        conn.execute("UPDATE stories SET root_bullet_id = ? WHERE id = ?", (root, sid))
+        root = best_root(conn, members)
+        conn.execute("UPDATE stories SET root_bullet_id = ?, root_reason = ? WHERE id = ?", (root, root_reason(conn, root), sid))
     conn.execute("UPDATE bullets SET parent_id = NULL WHERE id = ?", (root,))
     linked = 0
     for b in members:
@@ -331,16 +330,124 @@ def sync_story(conn, sid: int) -> int:
     return linked
 
 
-def promote_most_used(conn, sid: int) -> bool:
-    """If a member is now used strictly more than the root (after new resume links), make it root."""
+def _score(conn, bullet_id: int) -> int:
+    s = conn.execute("SELECT score FROM bullets WHERE id = ?", (bullet_id,)).fetchone()[0]
+    return -1 if s is None else s
+
+
+def best_root(conn, members: list[int]) -> int:
+    """Root rule: highest quality score; tie -> most used; tie -> lowest id."""
+    return max(members, key=lambda b: (_score(conn, b), _usage(conn, b), -b))
+
+
+def root_reason(conn, root: int) -> str:
+    return f"highest quality score ({_score(conn, root)}/100; used in {_usage(conn, root)} resumes)"
+
+
+def promote_best(conn, sid: int) -> bool:
+    """Re-pick the story's root among its accepted members by the root rule. Returns True if changed."""
     root = conn.execute("SELECT root_bullet_id FROM stories WHERE id = ?", (sid,)).fetchone()[0]
-    members = [b for (b,) in conn.execute("SELECT bullet_id FROM story_members WHERE story_id = ?", (sid,))]
-    best = max(members, key=lambda b: (_usage(conn, b), b == root))
-    if best != root and _usage(conn, best) > _usage(conn, root):
-        conn.execute("UPDATE stories SET root_bullet_id = ?, root_reason = ? WHERE id = ?",
-                     (best, f"most-used version ({_usage(conn, best)} resumes); promoted after new resume", sid))
+    members = [b for b, m in conn.execute("SELECT bullet_id, match_id FROM story_members WHERE story_id = ?", (sid,))
+               if _accepted(conn, m)]
+    if not members:
+        return False
+    best = best_root(conn, members)
+    if best != root:
+        conn.execute("UPDATE stories SET root_bullet_id = ?, root_reason = ? WHERE id = ?", (best, root_reason(conn, best), sid))
         return True
     return False
+
+
+# --------------------------------------------------------------------------
+# Bullet quality score (guidelines in good_bullets.xml)
+# --------------------------------------------------------------------------
+
+GUIDELINES_PATH = Path(__file__).with_name("good_bullets.xml")
+GUIDELINE_KEYS = ["g1_accomplishment", "g2_action_verb", "g3_structure", "g4_quantified",
+                  "g5_concrete_outcome", "g6_scope", "g7_concise"]
+
+
+class BulletScore(BaseModel):
+    bullet_id: int
+    g1_accomplishment: int = Field(description="0-4: accomplishment, not a duty; no 'Responsible for/Helped/Worked on'.")
+    g2_action_verb: int = Field(description="0-4: opens with a strong past-tense verb naming the person's contribution.")
+    g3_structure: int = Field(description="0-4: action + what/how + result (X-Y-Z).")
+    g4_quantified: int = Field(description="0-4: $, % change or scale; timeframe/baseline where possible.")
+    g5_concrete_outcome: int = Field(description="0-4: concrete outcome; 4 if the bullet is already well quantified.")
+    g6_scope: int = Field(description="0-4: scope shown (team size, cross-functional/global, budget, accounts/users).")
+    g7_concise: int = Field(description="0-4: 1-2 lines, no pronouns, jargon, self-praise adjectives or vague words.")
+    critique: str = Field(description="One short sentence: the main strength or the main thing to fix.")
+
+
+class ScoreBatch(BaseModel):
+    scores: list[BulletScore]
+
+
+def score_prompt(guidelines: str) -> str:
+    return f"""You score resume bullets against the guidelines and examples below.
+
+{guidelines}
+
+Rate each bullet on each of the 7 guidelines from 0 to 4:
+0 = violates it (like the <bad> examples), 2 = partly meets it, 4 = fully meets it (like the <good> examples).
+Judge only the bullet's own text, independently of the other bullets, with the same strictness
+throughout. If a guideline cannot apply (e.g. guideline 5 when the bullet is already well
+quantified), rate it 4. Do not reward length, buzzwords or impressive-sounding claims without
+evidence. Score every bullet id exactly once."""
+
+
+def score_bullets(conn, client, guidelines_path: Path, redo: bool = False, batch: int = 40) -> int:
+    """Score bullets with no score (or all with redo). Returns the number scored."""
+    rows = conn.execute("SELECT id, text FROM bullets" + ("" if redo else " WHERE score IS NULL") + " ORDER BY id").fetchall()
+    if not rows:
+        return 0
+    if not guidelines_path.is_file():
+        raise RuntimeError(f"Guidelines file not found: {guidelines_path}")
+    system = score_prompt(guidelines_path.read_text(encoding="utf-8"))
+    for start in range(0, len(rows), batch):
+        chunk = rows[start:start + batch]
+        ids = {bid for bid, _ in chunk}
+
+        def validate(r: ScoreBatch) -> str:
+            err = check_partition([[s.bullet_id] for s in r.scores], ids)
+            bad = [s.bullet_id for s in r.scores if any(not 0 <= getattr(s, k) <= 4 for k in GUIDELINE_KEYS)]
+            return "; ".join(filter(None, [err, f"ratings outside 0-4 for {bad}" if bad else ""]))
+
+        print(f"Scoring bullets {start + 1}-{start + len(chunk)} of {len(rows)} ...")
+        result = call_opus(conn, client, "score", system, "\n".join(f"id={bid} | {text}" for bid, text in chunk),
+                           ScoreBatch, validate, live=True)
+        with conn:
+            for s in result.scores:
+                ratings = {k: getattr(s, k) for k in GUIDELINE_KEYS}
+                total = round(sum(ratings.values()) / (4 * len(GUIDELINE_KEYS)) * 100)
+                conn.execute("UPDATE bullets SET score = ?, score_breakdown = ?, score_critique = ?, scored_at = datetime('now') "
+                             "WHERE id = ?", (total, json.dumps(ratings), s.critique, s.bullet_id))
+    return len(rows)
+
+
+def repick_roots(conn) -> int:
+    """Apply the root rule to every story whose grouping is accepted; sync parent_id. Returns roots changed."""
+    changed = 0
+    for sid, mid in conn.execute("SELECT id, match_id FROM stories").fetchall():
+        if not _accepted(conn, mid):
+            continue                      # pending/rejected groupings are settled by review + apply
+        if promote_best(conn, sid):
+            changed += 1
+        sync_story(conn, sid)
+    return changed
+
+
+def cmd_score(conn, client, args) -> int:
+    n = score_bullets(conn, client, args.guidelines, redo=args.redo)
+    print(f"Scored {n} bullets." if n else "All bullets already scored (use --redo to rescore).")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    backup = args.db.with_name(f"{args.db.stem}.bak-score-{stamp}{args.db.suffix}")
+    shutil.copy2(args.db, backup)
+    with conn:
+        changed = repick_roots(conn)
+    print(f"Backup: {backup}\nRoots re-picked by quality score: {changed} stories changed root.")
+    print_status(conn)
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -452,6 +559,7 @@ def cmd_stories(conn, client, args) -> int:
             return 1
         clear(conn, "stories")
 
+    score_bullets(conn, client, args.guidelines)   # roots are chosen by quality score
     for label, company_ids in story_groups(conn).items():
         marks = ",".join("?" * len(company_ids))
         bullets = conn.execute(
@@ -479,13 +587,9 @@ def cmd_stories(conn, client, args) -> int:
         with conn:
             multi = 0
             for g in groups:
-                # Enforce the most-used rule in code; Opus's pick stands only on a tie.
-                top = max(used[i] for i in g.member_ids)
-                tied = [i for i in g.member_ids if used[i] == top]
-                root, reason = g.root_id, g.root_reason
-                if root not in tied:
-                    root = min(tied)
-                    reason = f"most-used version ({top} resumes); set by rule, overriding model pick {g.root_id}"
+                # Root rule enforced in code: highest quality score, then most used.
+                root = best_root(conn, g.member_ids)
+                reason = root_reason(conn, root) if len(g.member_ids) > 1 else "only version"
                 mid = None
                 if len(g.member_ids) > 1:
                     multi += 1
@@ -761,28 +865,31 @@ def assign_orphans(conn, client) -> None:
                 sid = a.existing_story_id
                 root = conn.execute("SELECT root_bullet_id FROM stories WHERE id = ?", (sid,)).fetchone()[0]
                 members = [b for (b,) in conn.execute("SELECT bullet_id FROM story_members WHERE story_id = ?", (sid,))]
+                # Root would change if the new bullet outscores the current root (shown in review).
+                would_be = best_root(conn, members + [a.bullet_id])
                 mid, status = add_match(conn, "story", a.confidence, f"{label}: add #{a.bullet_id} to story #{sid}", a.shared_facts,
-                                        {"member_ids": members + [a.bullet_id], "root_id": root, "added_bullet_id": a.bullet_id,
-                                         "story_id": sid, "root_reason": "existing root kept", "confidence": a.confidence})
+                                        {"member_ids": members + [a.bullet_id], "root_id": would_be, "added_bullet_id": a.bullet_id,
+                                         "story_id": sid, "root_reason": root_reason(conn, would_be), "confidence": a.confidence})
                 conn.execute("INSERT INTO story_members (bullet_id, story_id, match_id) VALUES (?, ?, ?)", (a.bullet_id, sid, mid))
-                promote_most_used(conn, sid)
+                promoted = promote_best(conn, sid)   # only accepted members compete; pending ones after review
                 sync_story(conn, sid)
-                print(f"  [{status:13}] {a.confidence:6} #{a.bullet_id} -> story #{sid}")
+                print(f"  [{status:13}] {a.confidence:6} #{a.bullet_id} (score {_score(conn, a.bullet_id)}) -> story #{sid}"
+                      + (" - now the root" if promoted
+                         else " - would become the root if accepted" if would_be != root
+                         else f" (root #{root}, score {_score(conn, root)}, kept)"))
             for grp in fresh.values():
                 ids = [a.bullet_id for a in grp]
-                top = max(_usage(conn, b) for b in ids)
-                tied = [a for a in grp if _usage(conn, a.bullet_id) == top]
-                pick = next((a for a in tied if a.new_group_root), tied[0])
+                pick = best_root(conn, ids)
                 conf = min((a.confidence for a in grp), key=["low", "medium", "high"].index)
                 facts = "; ".join(sorted({a.shared_facts for a in grp if a.shared_facts}))
+                reason = "only version" if len(ids) == 1 else root_reason(conn, pick)
                 mid = None
                 if len(ids) > 1:
-                    mid, status = add_match(conn, "story", conf, f"{label}: new story, {len(ids)} versions, root #{pick.bullet_id}",
-                                            facts, {"member_ids": ids, "root_id": pick.bullet_id,
-                                                    "root_reason": "most flattering new version", "confidence": conf})
+                    mid, status = add_match(conn, "story", conf, f"{label}: new story, {len(ids)} versions, root #{pick}",
+                                            facts, {"member_ids": ids, "root_id": pick, "root_reason": reason, "confidence": conf})
                 sid = conn.execute(
                     "INSERT INTO stories (group_label, root_bullet_id, shared_facts, root_reason, match_id) VALUES (?, ?, ?, ?, ?)",
-                    (label, pick.bullet_id, facts, "only version" if len(ids) == 1 else "most flattering new version", mid)).lastrowid
+                    (label, pick, facts, reason, mid)).lastrowid
                 for b in ids:
                     conn.execute("INSERT INTO story_members (bullet_id, story_id, match_id) VALUES (?, ?, NULL)", (b, sid))
                 sync_story(conn, sid)
@@ -828,12 +935,15 @@ def cmd_add(conn, client, args) -> int:
                             new += 1
                         conn.execute("INSERT OR IGNORE INTO bullet_resumes (bullet_id, resume_id, position_id, sort_order) "
                                      "VALUES (?, ?, ?, ?)", (bid, resume_id, pid, order))
-            promoted = sum(promote_most_used(conn, sid) for sid in touched)
+            promoted = sum(promote_best(conn, sid) for sid in touched)   # usage breaks score ties
             for sid in touched:
                 sync_story(conn, sid)
         print(f"Imported {path.name}: {new} new bullets, {repeats} exact repeats linked"
-              + (f", {promoted} story root(s) promoted to the now most-used version" if promoted else ""))
+              + (f", {promoted} story root(s) re-picked" if promoted else ""))
 
+    n = score_bullets(conn, client, args.guidelines)   # new bullets get a quality score before placement
+    if n:
+        print(f"Scored {n} new bullet(s).")
     assign_orphans(conn, client)
     print_status(conn)
     return 0
@@ -865,6 +975,8 @@ def print_status(conn) -> None:
     print(f"stories: {q('SELECT COUNT(*) FROM stories')} "
           f"({q('SELECT COUNT(*) FROM stories WHERE match_id IS NOT NULL')} with variants) | "
           f"pending: {n_pending}")
+    sc = conn.execute("SELECT COUNT(score), COUNT(*), ROUND(AVG(score)), MIN(score), MAX(score) FROM bullets").fetchone()
+    print(f"scores: {sc[0]}/{sc[1]} bullets scored" + (f" | avg {sc[2]:.0f}, min {sc[3]}, max {sc[4]}" if sc[0] else ""))
     cost = conn.execute("SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM curation_runs").fetchone()
     print(f"tokens so far: {cost[0]} in / {cost[1]} out")
 
@@ -874,13 +986,14 @@ def show_match(conn, mid, kind, conf, summary, rationale, proposal) -> None:
     print("\n" + "=" * 100)
     print(f"#{mid}  {kind.upper()}  confidence={conf}\n{summary}")
     if kind == "story":
-        print(f"shared facts: {rationale}\nroot reason: {p['root_reason']}")
-        for bid in p["member_ids"]:
-            text, n = conn.execute(
-                "SELECT text, (SELECT COUNT(*) FROM bullet_resumes WHERE bullet_id = ?) FROM bullets WHERE id = ?",
-                (bid, bid)).fetchone()
-            tag = "ROOT" if bid == p["root_id"] else ("NEW " if bid == p.get("added_bullet_id") else "    ")
-            print(f"  {tag} #{bid} ({n}x) {text}")
+        root = best_root(conn, p["member_ids"])          # root if you accept, by the current rule
+        print(f"shared facts: {rationale}\nroot if accepted: #{root} - {root_reason(conn, root)}")
+        for bid in sorted(p["member_ids"], key=lambda b: (-_score(conn, b), -_usage(conn, b))):
+            text, critique = conn.execute("SELECT text, score_critique FROM bullets WHERE id = ?", (bid,)).fetchone()
+            tag = "ROOT" if bid == root else ("NEW " if bid == p.get("added_bullet_id") else "    ")
+            print(f"  {tag} #{bid} score {_score(conn, bid):>3} | used {_usage(conn, bid)}x | {text}")
+            if critique:
+                print(f"         critique: {critique}")
     else:
         print(f"rationale: {rationale}")
 
@@ -990,8 +1103,11 @@ def cmd_apply(conn, client, args) -> int:
                         _merge_position(conn, pid, keep)
                         stats["positions merged"] += 1
 
-        # 3. Stories
+        # 3. Stories: newly accepted members may outscore the root, so re-pick before syncing
         for (sid,) in conn.execute("SELECT id FROM stories").fetchall():
+            if _accepted(conn, conn.execute("SELECT match_id FROM stories WHERE id = ?", (sid,)).fetchone()[0]) \
+                    and promote_best(conn, sid):
+                stats["roots re-picked by score"] += 1
             stats["bullets linked to a root"] += sync_story(conn, sid)
 
     problems = conn.execute("PRAGMA foreign_key_check").fetchall()
@@ -1011,13 +1127,16 @@ def cmd_apply(conn, client, args) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ap.add_argument("--guidelines", type=Path, default=GUIDELINES_PATH, help="Bullet quality guidelines (XML/text)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in [("entities", cmd_entities), ("stories", cmd_stories), ("add", cmd_add), ("status", None),
-                     ("review", cmd_review), ("apply", cmd_apply)]:
+    for name, fn in [("entities", cmd_entities), ("stories", cmd_stories), ("add", cmd_add), ("score", cmd_score),
+                     ("status", None), ("review", cmd_review), ("apply", cmd_apply)]:
         p = sub.add_parser(name)
         p.set_defaults(func=fn)
         if name in ("entities", "stories"):
             p.add_argument("--redo", action="store_true", help="discard previous results for this step and redo")
+        if name == "score":
+            p.add_argument("--redo", action="store_true", help="rescore every bullet (e.g. after editing the guidelines)")
         if name == "add":
             p.add_argument("resume_json", type=Path, help="A parsed resume JSON (output of parse_resume.py)")
     args = ap.parse_args()
@@ -1028,7 +1147,7 @@ def main() -> int:
     if args.func is None:
         print_status(conn)
         return 0
-    client = anthropic.Anthropic() if args.cmd in ("entities", "stories", "add") else None
+    client = anthropic.Anthropic() if args.cmd in ("entities", "stories", "add", "score") else None
     try:
         return args.func(conn, client, args)
     except anthropic.RateLimitError as e:

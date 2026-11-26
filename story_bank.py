@@ -78,10 +78,23 @@ CREATE INDEX IF NOT EXISTS ix_bullet_resumes_resume ON bullet_resumes(resume_id)
 """
 
 
+SCORE_COLUMNS = {
+    "score": "INTEGER",            # 0-100 bullet quality score (curate.py score)
+    "score_breakdown": "TEXT",     # JSON: per-guideline 0-4 ratings
+    "score_critique": "TEXT",      # one-line explanation
+    "scored_at": "TEXT",
+}
+
+
 def connect(db: Path) -> sqlite3.Connection:
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db)
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(bullets)")}
+    for col, typ in SCORE_COLUMNS.items():
+        if col not in have:
+            conn.execute(f"ALTER TABLE bullets ADD COLUMN {col} {typ}")
+    conn.commit()
     return conn
 
 
